@@ -1,0 +1,34 @@
+PROJECT STRUCTURE 
+
+ai-email-assistant/
+│
+├── main.py
+├── gmail_client.py
+├── email_processor.py
+├── llm.py
+├── vector_store.py
+├── rag.py
+├── models.py
+├── app.py              # frontend later
+│
+├── .env
+├── .gitignore
+├── requirements.txt
+└── README.md
+
+
+IN MAIN.PY:
+
+'app' is effectively the central object FastAPI uses to know what endpoints exist.
+
+@app.get("/") is python decorator - tells FastAPI When someone sends:
+GET /
+run the function below.
+
+creates this mapping - 
+HTTP request
+GET /
+   ↓
+FastAPI
+   ↓
+home()
