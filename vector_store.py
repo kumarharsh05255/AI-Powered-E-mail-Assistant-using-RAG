@@ -8,15 +8,15 @@ from sentence_transformers import SentenceTransformer
 load_dotenv()
 
 
-# Load the embedding model once when the application starts
+# Load the embedding model once when the backend starts
 embedding_model = SentenceTransformer(
     os.getenv("EMBEDDING_MODEL_NAME")
 )
 
 
-# PersistentClient keeps the vector database on disk
+# PersistentClient keeps ChromaDB data on disk
 chroma_client = chromadb.PersistentClient(
-    path=os.getenv("CHROMA_PATH")
+   path = "chroma_db"
 )
 
 
@@ -35,7 +35,7 @@ def email_exists(email_id):
 
 
 def store_email(email, analysis):
-    # Avoid embedding and storing the same Gmail message again
+    # Do not embed/store an email that is already synced
     if email_exists(email["id"]):
         return False
 
@@ -50,7 +50,7 @@ Body:
         email_text
     ).tolist()
 
-    # Store the email text, its embedding, and useful AI analysis as metadata
+    # Store the email together with its AI-generated analysis
     collection.add(
         ids=[email["id"]],
         embeddings=[embedding],
@@ -60,10 +60,12 @@ Body:
                 "sender": email["sender"],
                 "subject": email["subject"],
                 "thread_id": email["thread_id"],
+                "date": email["date"],
                 "urgency": analysis["urgency"],
                 "intent": analysis["intent"],
                 "topic": analysis["topic"],
                 "sentiment": analysis["sentiment"],
+                "summary": analysis["summary"],
                 "profanity": analysis["profanity"],
                 "unsafe_content": analysis["unsafe_content"],
             }
@@ -73,8 +75,80 @@ Body:
     return True
 
 
+def get_stored_emails():
+    # Retrieve synced emails and their saved AI analysis
+    results = collection.get(
+        include=[
+            "documents",
+            "metadatas",
+        ]
+    )
+
+    emails = []
+
+    for email_id, document, metadata in zip(
+        results["ids"],
+        results["documents"],
+        results["metadatas"],
+    ):
+        emails.append(
+            {
+                "id": email_id,
+                "thread_id": metadata.get(
+                    "thread_id",
+                    "",
+                ),
+                "sender": metadata.get(
+                    "sender",
+                    "",
+                ),
+                "subject": metadata.get(
+                    "subject",
+                    "",
+                ),
+                "date": metadata.get(
+                    "date",
+                    "",
+                ),
+                "body": document,
+                "analysis": {
+                    "summary": metadata.get(
+                        "summary",
+                        "",
+                    ),
+                    "urgency": metadata.get(
+                        "urgency",
+                        "",
+                    ),
+                    "intent": metadata.get(
+                        "intent",
+                        "",
+                    ),
+                    "topic": metadata.get(
+                        "topic",
+                        "",
+                    ),
+                    "sentiment": metadata.get(
+                        "sentiment",
+                        "",
+                    ),
+                    "profanity": metadata.get(
+                        "profanity",
+                        False,
+                    ),
+                    "unsafe_content": metadata.get(
+                        "unsafe_content",
+                        False,
+                    ),
+                },
+            }
+        )
+
+    return emails
+
+
 def search_emails(query, top_k=5):
-    # Convert the user's natural-language search into the same vector space
+    # Convert the search query into an embedding for semantic search
     query_embedding = embedding_model.encode(
         query
     ).tolist()

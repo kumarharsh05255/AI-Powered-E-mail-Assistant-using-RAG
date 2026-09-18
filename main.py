@@ -12,9 +12,12 @@ from email_analyzer import (
     analyze_sentiment,
 )
 from vector_store import (
+    email_exists,
     store_email,
     search_emails,
+    get_stored_emails,
 )
+
 from rag import generate_reply
 
 
@@ -23,7 +26,7 @@ app = FastAPI(
 )
 
 
-# Basic endpoint to quickly check whether the backend is running
+# Quick checks to confirm that the FastAPI backend is running
 @app.get("/")
 def home():
     return {
@@ -40,7 +43,7 @@ def health_check():
 
 @app.get("/emails")
 def get_recent_emails(limit: int = 10):
-    # Fetch recent emails directly from Gmail for the frontend inbox
+    # Fetch raw recent emails directly from Gmail
     try:
         return fetch_emails(limit)
 
@@ -53,7 +56,7 @@ def get_recent_emails(limit: int = 10):
 
 @app.post("/sync-emails")
 def sync_emails(limit: int = 10):
-    # Analyze and store new emails in ChromaDB for semantic search and RAG
+    # Analyze new Gmail emails and store them in ChromaDB
     try:
         emails = fetch_emails(limit)
 
@@ -61,12 +64,17 @@ def sync_emails(limit: int = 10):
         skipped = 0
 
         for email in emails:
+            # Skip the LLM call when the email is already stored
+        
+
+            if email_exists(email["id"]):
+                skipped += 1
+                continue
+
             analysis = analyze_email(email)
 
             if store_email(email, analysis):
                 stored += 1
-            else:
-                skipped += 1
 
         return {
             "fetched": len(emails),
@@ -79,6 +87,27 @@ def sync_emails(limit: int = 10):
             status_code=500,
             detail=str(e),
         )
+
+
+@app.get("/inbox")
+def get_analyzed_inbox():
+    # Use saved analysis instead of calling the LLM again
+    emails = get_stored_emails()
+
+    urgency_order = {
+        "High": 0,
+        "Medium": 1,
+        "Low": 2,
+    }
+
+    emails.sort(
+        key=lambda email: urgency_order.get(
+            email["analysis"]["urgency"],
+            3,
+        )
+    )
+
+    return emails
 
 
 @app.get("/analyze/{email_id}")
@@ -116,7 +145,6 @@ def search_email_endpoint(
     query: str,
     top_k: int = 5,
 ):
-    # Semantic search only searches emails already synced into ChromaDB
     return search_emails(
         query=query,
         top_k=top_k,
@@ -130,7 +158,7 @@ def generate_reply_endpoint(email_id: str):
 
         reply = generate_reply(email)
 
-        # Reply is only a draft; nothing is sent automatically
+        # Reply remains a draft until the user explicitly sends it
         return {
             "reply": reply,
             "status": "draft",
@@ -148,7 +176,6 @@ def send_reply_endpoint(
     email_id: str,
     reply_text: str,
 ):
-    # Email is sent only after the user explicitly approves the draft
     try:
         return send_reply(
             email_id,

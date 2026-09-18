@@ -8,15 +8,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-API_URL = os.getenv(
-    "BACKEND_URL",
-    "http://127.0.0.1:8000",
-)
+BACKEND_URL="http://127.0.0.1:8000"
 
-APP_NAME = os.getenv(
-    "APP_NAME",
-    "AI Powered Email Assistant",
-)
+
+APP_NAME="AI-Powered Email Assistant"
 
 
 st.set_page_config(
@@ -27,13 +22,13 @@ st.set_page_config(
 
 
 # -------------------------
-# Helper Functions
+# Helpers
 # -------------------------
 
 def check_backend():
     try:
         response = requests.get(
-            f"{API_URL}/health",
+            f"{BACKEND_URL}/health",
             timeout=5,
         )
 
@@ -44,14 +39,27 @@ def check_backend():
 
 
 def select_email(email):
-    # Clear old AI results when the user opens another email
+    # Remove results belonging to the previously selected email
     st.session_state["selected_email"] = email
     st.session_state.pop("analysis", None)
     st.session_state.pop("draft_reply", None)
 
 
+def urgency_icon(urgency):
+    icons = {
+        "High": "🔴",
+        "Medium": "🟡",
+        "Low": "🟢",
+    }
+
+    return icons.get(
+        urgency,
+        "⚪",
+    )
+
+
 # -------------------------
-# Page Header
+# Header
 # -------------------------
 
 st.title(APP_NAME)
@@ -69,9 +77,13 @@ st.sidebar.title("📧 Mail Assistant")
 
 
 if check_backend():
-    st.sidebar.success("Backend connected")
+    st.sidebar.success(
+        "Backend connected"
+    )
 else:
-    st.sidebar.error("Backend unavailable")
+    st.sidebar.error(
+        "Backend unavailable"
+    )
 
 
 email_limit = st.sidebar.number_input(
@@ -82,15 +94,16 @@ email_limit = st.sidebar.number_input(
 )
 
 
-# Load emails directly from Gmail
 if st.sidebar.button(
     "Load Recent Emails",
     use_container_width=True,
 ):
     try:
-        with st.spinner("Loading emails..."):
+        with st.spinner(
+            "Loading emails..."
+        ):
             response = requests.get(
-                f"{API_URL}/emails",
+                f"{BACKEND_URL}/emails",
                 params={
                     "limit": email_limit,
                 },
@@ -99,14 +112,11 @@ if st.sidebar.button(
 
         if response.ok:
             st.session_state["emails"] = response.json()
-            st.sidebar.success("Emails loaded")
+            st.session_state["prioritized"] = False
 
         else:
             st.sidebar.error(
-                response.json().get(
-                    "detail",
-                    "Could not load emails",
-                )
+                "Could not load emails"
             )
 
     except requests.RequestException:
@@ -115,38 +125,50 @@ if st.sidebar.button(
         )
 
 
-# Analyze + embed new emails into ChromaDB
 if st.sidebar.button(
-    "Sync Emails",
+    "Sync & Prioritize",
     use_container_width=True,
 ):
     try:
+        # First sync new emails so their analysis is available
         with st.spinner(
-            "Analyzing and storing emails..."
+            "Analyzing and prioritizing emails..."
         ):
-            response = requests.post(
-                f"{API_URL}/sync-emails",
+            sync_response = requests.post(
+                f"{BACKEND_URL}/sync-emails",
                 params={
                     "limit": email_limit,
                 },
                 timeout=120,
             )
 
-        if response.ok:
-            result = response.json()
-
-            st.sidebar.success(
-                f"Stored {result['stored']} | "
-                f"Skipped {result['skipped']}"
+        if not sync_response.ok:
+            st.sidebar.error(
+                "Email sync failed"
             )
 
         else:
-            st.sidebar.error(
-                response.json().get(
-                    "detail",
-                    "Sync failed",
-                )
+            sync_result = sync_response.json()
+
+            # Load the analyzed inbox already sorted by urgency
+            inbox_response = requests.get(
+                f"{BACKEND_URL}/inbox",
+                timeout=30,
             )
+
+            if inbox_response.ok:
+                st.session_state[
+                    "emails"
+                ] = inbox_response.json()
+
+                st.session_state[
+                    "prioritized"
+                ] = True
+
+                st.sidebar.success(
+                    f"Stored {sync_result['stored']} | "
+                    f"Skipped {sync_result['skipped']}"
+                )
 
     except requests.RequestException:
         st.sidebar.error(
@@ -160,7 +182,9 @@ if st.sidebar.button(
 
 st.sidebar.divider()
 
-st.sidebar.subheader("Semantic Search")
+st.sidebar.subheader(
+    "Semantic Search"
+)
 
 search_query = st.sidebar.text_input(
     "Search your emails",
@@ -172,15 +196,10 @@ if st.sidebar.button(
     "Search",
     use_container_width=True,
 ):
-    if not search_query.strip():
-        st.sidebar.warning(
-            "Enter something to search."
-        )
-
-    else:
+    if search_query.strip():
         try:
             response = requests.get(
-                f"{API_URL}/search-emails",
+                f"{BACKEND_URL}/search-emails",
                 params={
                     "query": search_query,
                     "top_k": 5,
@@ -193,14 +212,9 @@ if st.sidebar.button(
                     "search_results"
                 ] = response.json()
 
-            else:
-                st.sidebar.error(
-                    "Search failed"
-                )
-
         except requests.RequestException:
             st.sidebar.error(
-                "Could not connect to backend"
+                "Search failed"
             )
 
 
@@ -209,7 +223,9 @@ if st.sidebar.button(
 # -------------------------
 
 if "search_results" in st.session_state:
-    st.subheader("🔎 Semantic Search Results")
+    st.subheader(
+        "🔎 Search Results"
+    )
 
     results = st.session_state[
         "search_results"
@@ -233,7 +249,7 @@ if "search_results" in st.session_state:
     if not documents:
         st.info(
             "No indexed emails found. "
-            "Try syncing your emails first."
+            "Sync emails first."
         )
 
     for document, metadata, distance in zip(
@@ -278,18 +294,16 @@ if "search_results" in st.session_state:
                 f"{distance:.3f}"
             )
 
-
     st.divider()
 
 
 # -------------------------
-# Inbox + Email Preview
+# Inbox
 # -------------------------
 
 if "emails" not in st.session_state:
     st.info(
-        "👈 Click **Load Recent Emails** "
-        "to open your inbox."
+        "👈 Load or sync your emails to begin."
     )
 
 else:
@@ -301,42 +315,81 @@ else:
     )
 
 
-    # -------------------------
-    # Inbox
-    # -------------------------
-
     with inbox_column:
         st.subheader("Inbox")
 
-        st.caption(
-            f"{len(emails)} recent emails"
-        )
+        if st.session_state.get(
+            "prioritized",
+            False,
+        ):
+            st.caption(
+                "Sorted by AI urgency"
+            )
+        else:
+            st.caption(
+                f"{len(emails)} recent emails"
+            )
+
 
         for email in emails:
-            with st.container(border=True):
-                subject = (
-                    email["subject"]
-                    or "No Subject"
-                )
+            analysis = email.get(
+                "analysis"
+            )
+
+            with st.container(
+                border=True
+            ):
+                if analysis:
+                    urgency = analysis.get(
+                        "urgency",
+                        "",
+                    )
+
+                    st.write(
+                        f"{urgency_icon(urgency)} "
+                        f"**{urgency.upper()}**"
+                    )
 
                 st.markdown(
-                    f"**{subject}**"
+                    f"**{email.get('subject', 'No Subject')}**"
                 )
 
                 st.caption(
-                    email["sender"]
-                )
-
-                preview = (
-                    email["body"]
-                    .replace("\n", " ")
-                    [:120]
-                )
-
-                if preview:
-                    st.write(
-                        preview + "..."
+                    email.get(
+                        "sender",
+                        "",
                     )
+                )
+
+                # Synced emails already have an AI summary
+                if analysis:
+                    st.write(
+                        analysis.get(
+                            "summary",
+                            "",
+                        )
+                    )
+
+                    st.caption(
+                        f"{analysis.get('topic', '')} • "
+                        f"{analysis.get('sentiment', '')}"
+                    )
+
+                else:
+                    preview = (
+                        email.get(
+                            "body",
+                            "",
+                        )
+                        .replace("\n", " ")
+                        [:120]
+                    )
+
+                    if preview:
+                        st.write(
+                            preview + "..."
+                        )
+
 
                 if st.button(
                     "Open",
@@ -344,21 +397,30 @@ else:
                     use_container_width=True,
                 ):
                     select_email(email)
+
+                    # Reuse saved analysis when opening a synced email
+                    if analysis:
+                        st.session_state[
+                            "analysis"
+                        ] = analysis
+
                     st.rerun()
 
 
     # -------------------------
-    # Selected Email
+    # Email Preview
     # -------------------------
 
     with email_column:
 
         if "selected_email" not in st.session_state:
-            st.subheader("Select an email")
+            st.subheader(
+                "Select an email"
+            )
 
             st.write(
                 "Choose an email from the inbox "
-                "to preview and analyze it."
+                "to preview it."
             )
 
         else:
@@ -367,24 +429,35 @@ else:
             ]
 
             st.subheader(
-                email["subject"]
-                or "No Subject"
+                email.get(
+                    "subject",
+                    "No Subject",
+                )
             )
 
             st.write(
-                f"**From:** {email['sender']}"
+                f"**From:** "
+                f"{email.get('sender', '')}"
             )
 
             st.caption(
-                email["date"]
+                email.get(
+                    "date",
+                    "",
+                )
             )
 
             st.divider()
 
-            st.markdown("### Message")
+            st.markdown(
+                "### Message"
+            )
 
             st.write(
-                email["body"]
+                email.get(
+                    "body",
+                    "",
+                )
                 or "No readable text body found."
             )
 
@@ -395,37 +468,38 @@ else:
 
             st.divider()
 
-            st.markdown("### AI Analysis")
+            st.markdown(
+                "### AI Analysis"
+            )
 
-            if st.button(
-                "Analyze Email",
-                use_container_width=True,
-            ):
-                try:
-                    with st.spinner(
-                        "Analyzing email..."
-                    ):
-                        response = requests.get(
-                            f"{API_URL}/analyze/"
-                            f"{email['id']}",
-                            timeout=60,
-                        )
 
-                    if response.ok:
-                        st.session_state[
-                            "analysis"
-                        ] = response.json()
+            if "analysis" not in st.session_state:
 
-                    else:
+                if st.button(
+                    "Analyze Email",
+                    use_container_width=True,
+                ):
+                    try:
+                        with st.spinner(
+                            "Analyzing email..."
+                        ):
+                            response = requests.get(
+                                f"{BACKEND_URL}/analyze/"
+                                f"{email['id']}",
+                                timeout=60,
+                            )
+
+                        if response.ok:
+                            st.session_state[
+                                "analysis"
+                            ] = response.json()
+
+                            st.rerun()
+
+                    except requests.RequestException:
                         st.error(
-                            "Email analysis failed."
+                            "Analysis failed"
                         )
-
-                except requests.RequestException:
-                    st.error(
-                        "Could not connect "
-                        "to backend."
-                    )
 
 
             if "analysis" in st.session_state:
@@ -508,7 +582,10 @@ else:
 
             st.divider()
 
-            st.markdown("### AI Reply")
+            st.markdown(
+                "### AI Reply"
+            )
+
 
             if st.button(
                 "Generate AI Reply",
@@ -519,32 +596,27 @@ else:
                         "Generating reply..."
                     ):
                         response = requests.get(
-                            f"{API_URL}/generate-reply/"
+                            f"{BACKEND_URL}/generate-reply/"
                             f"{email['id']}",
                             timeout=60,
                         )
 
                     if response.ok:
-                        result = response.json()
-
                         st.session_state[
                             "draft_reply"
-                        ] = result["reply"]
+                        ] = response.json()[
+                            "reply"
+                        ]
 
-                    else:
-                        st.error(
-                            "Could not generate reply."
-                        )
+                        st.rerun()
 
                 except requests.RequestException:
                     st.error(
-                        "Could not connect "
-                        "to backend."
+                        "Reply generation failed"
                     )
 
 
-            # The AI never sends automatically.
-            # The user can edit the draft before explicitly sending it.
+            # AI creates only a draft. Sending always requires user approval.
             if "draft_reply" in st.session_state:
                 edited_reply = st.text_area(
                     "Review and edit reply",
@@ -555,9 +627,9 @@ else:
                 )
 
                 st.warning(
-                    "Review the reply before sending. "
-                    "Sending cannot be undone."
+                    "Review the reply before sending."
                 )
+
 
                 if st.button(
                     "Send Reply",
@@ -575,7 +647,7 @@ else:
                                 "Sending reply..."
                             ):
                                 response = requests.post(
-                                    f"{API_URL}/send-reply/"
+                                    f"{BACKEND_URL}/send-reply/"
                                     f"{email['id']}",
                                     params={
                                         "reply_text":
