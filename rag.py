@@ -17,7 +17,7 @@ client = Groq(
 LLM_MODEL = os.getenv("LLM_MODEL_NAME")
 
 
-def generate_reply(email):
+def generate_reply_stream(email):
     # Search ChromaDB for emails semantically similar to the current email
     results = search_emails(
         email["body"],
@@ -31,7 +31,7 @@ def generate_reply(email):
 
     # Smaller ChromaDB distance means the emails are more similar
     for document, distance in zip(documents, distances):
-        if distance < 1.0:
+        if distance < 1.5:
             relevant_emails.append(document)
 
     if relevant_emails:
@@ -40,19 +40,19 @@ def generate_reply(email):
         context = "No relevant historical context found."
 
     email_text = f"""
-From: {email["sender"]}
-Subject: {email["subject"]}
+    From: {email["sender"]}
+    Subject: {email["subject"]}
 
-{email["body"]}
-"""
+    {email["body"]}
+    """
 
     prompt = REPLY_PROMPT.format(
         email=email_text,
         context=context,
     )
 
-    # Generate the final reply using the current email + retrieved context
-    response = client.chat.completions.create(
+    # Stream the reply from Groq instead of waiting for the full response
+    stream = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[
             {
@@ -61,6 +61,12 @@ Subject: {email["subject"]}
             }
         ],
         temperature=0.3,
+        stream=True,
     )
 
-    return response.choices[0].message.content
+    # Send each generated piece as soon as it becomes available
+    for chunk in stream:
+        content = chunk.choices[0].delta.content
+
+        if content:
+            yield content

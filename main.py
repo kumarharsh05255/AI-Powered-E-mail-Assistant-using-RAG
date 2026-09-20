@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 
 from gmail_client import (
     fetch_emails,
@@ -17,8 +18,7 @@ from vector_store import (
     search_emails,
     get_stored_emails,
 )
-
-from rag import generate_reply
+from rag import generate_reply_stream
 
 
 app = FastAPI(
@@ -64,9 +64,7 @@ def sync_emails(limit: int = 10):
         skipped = 0
 
         for email in emails:
-            # Skip the LLM call when the email is already stored
-        
-
+            # Skip emails already stored to avoid unnecessary LLM calls
             if email_exists(email["id"]):
                 skipped += 1
                 continue
@@ -156,13 +154,11 @@ def generate_reply_endpoint(email_id: str):
     try:
         email = get_email(email_id)
 
-        reply = generate_reply(email)
-
-        # Reply remains a draft until the user explicitly sends it
-        return {
-            "reply": reply,
-            "status": "draft",
-        }
+        # StreamingResponse sends each generated chunk immediately
+        return StreamingResponse(
+            generate_reply_stream(email),
+            media_type="text/plain",
+        )
 
     except Exception as e:
         raise HTTPException(

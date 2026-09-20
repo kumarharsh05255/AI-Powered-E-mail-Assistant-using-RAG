@@ -13,3 +13,5 @@ groq
 
 chromadb
 sentence-transformers
+
+beautifulsoup4
