@@ -1,5 +1,8 @@
+import time
+import base64
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 
@@ -41,7 +44,8 @@ st.markdown(
     <style>
 
         .block-container {
-            padding-top: 1rem;
+            padding-top: 0.25rem;
+            padding-bottom: 0.5rem;
         }
 
         .stApp {
@@ -97,6 +101,11 @@ def select_email(email):
         None,
     )
 
+    st.session_state.pop(
+        "reply_editor",
+        None,
+    )
+
 
 def urgency_icon(urgency):
 
@@ -136,25 +145,42 @@ def find_email_by_id(email_id):
 # HEADER
 # ============================================================
 
+with open("assets/header.png", "rb") as image_file:
+    encoded_image = base64.b64encode(
+        image_file.read()
+    ).decode()
+
 st.markdown(
-    f'<div style="text-align:center; margin-bottom:40px;">'
-    f'<h1 style="font-size:42px; margin:0; line-height:1.1;">'
-    f'{APP_NAME}'
-    f'</h1>'
-    f'<div style="font-size:15px; color:#888; margin-top:-15px;">'
-    f'Understand, prioritize, search, and reply to emails with AI.'
-    f'</div>'
-    f'</div>',
+    f"""
+    <div style="
+        width: 100%;
+        height: 230px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: -25px;
+        margin-bottom: -20px;
+    ">
+        <img
+            src="data:image/png;base64,{encoded_image}"
+            style="
+                width: 50%;
+                height: auto;
+                display: block;
+            "
+        >
+    </div>
+    """,
     unsafe_allow_html=True,
 )
-
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
 st.sidebar.title(
-    "📧 Mail Assistant"
+    "⚙️Controls"
 )
 
 
@@ -184,7 +210,7 @@ email_limit = st.sidebar.number_input(
 # ============================================================
 
 if st.sidebar.button(
-    "Load Recent Emails",
+    "Fetch Recent Emails",
     use_container_width=True,
 ):
 
@@ -202,28 +228,39 @@ if st.sidebar.button(
     )
 
     try:
+        status_placeholder = st.empty()
 
-        with st.spinner(
-            "Loading emails..."
-        ):
+        status_placeholder.info(
+            "⏳ Loading recent emails..."
+        )
 
-            response = requests.get(
-                f"{BACKEND_URL}/emails",
-                params={
-                    "limit": email_limit,
-                },
-                timeout=30,
-            )
+        response = requests.get(
+            f"{BACKEND_URL}/emails",
+            params={
+                "limit": email_limit,
+            },
+            timeout=120,
+        )
 
         if response.ok:
 
-            st.session_state[
-                "emails"
-            ] = response.json()
+            load_result = response.json()
+
+            status_placeholder.success(
+                "✅ Loaded recent emails — analyzed and stored in Vector DB."
+            )
 
             st.session_state[
-                "prioritized"
-            ] = False
+                "emails"
+            ] = load_result.get(
+                "emails",
+                [],
+            )
+
+            st.sidebar.success(
+                f"Stored: {load_result.get('stored', 0)} new emails | "
+                f"Skipped: {load_result.get('skipped', 0)} already stored"
+            )
 
             st.session_state.pop(
                 "selected_email",
@@ -240,107 +277,16 @@ if st.sidebar.button(
                 None,
             )
 
+            st.session_state.pop(
+                "reply_editor",
+                None,
+            )
+
         else:
 
             st.sidebar.error(
                 "Could not load emails."
             )
-
-    except requests.RequestException:
-
-        st.sidebar.error(
-            "Could not connect to backend."
-        )
-
-
-# ============================================================
-# STORE + RANK
-# ============================================================
-
-if st.sidebar.button(
-    "Store in VectorDB and Rank by Urgency",
-    use_container_width=True,
-):
-
-    st.session_state[
-        "show_startup_message"
-    ] = False
-
-    st.session_state[
-        "active_view"
-    ] = "inbox"
-
-    st.session_state.pop(
-        "search_results",
-        None,
-    )
-
-    try:
-
-        with st.spinner(
-            "Analyzing and ranking emails..."
-        ):
-
-            sync_response = requests.post(
-                f"{BACKEND_URL}/sync-emails",
-                params={
-                    "limit": email_limit,
-                },
-                timeout=120,
-            )
-
-        if not sync_response.ok:
-
-            st.sidebar.error(
-                "Email sync failed."
-            )
-
-        else:
-
-            sync_result = (
-                sync_response.json()
-            )
-
-            inbox_response = requests.get(
-                f"{BACKEND_URL}/inbox",
-                timeout=30,
-            )
-
-            if inbox_response.ok:
-
-                st.session_state[
-                    "emails"
-                ] = inbox_response.json()
-
-                st.session_state[
-                    "prioritized"
-                ] = True
-
-                st.session_state.pop(
-                    "selected_email",
-                    None,
-                )
-
-                st.session_state.pop(
-                    "analysis",
-                    None,
-                )
-
-                st.session_state.pop(
-                    "draft_reply",
-                    None,
-                )
-
-                st.sidebar.success(
-                    f"Stored {sync_result['stored']} | "
-                    f"Skipped {sync_result['skipped']}"
-                )
-
-            else:
-
-                st.sidebar.error(
-                    "Could not load ranked inbox."
-                )
 
     except requests.RequestException:
 
@@ -436,7 +382,7 @@ if (
 ):
 
     st.info(
-        "👈 Load or sync your emails to begin."
+        "👈 Load your recent emails to begin."
     )
 
 
@@ -723,170 +669,159 @@ if (
 
     with inbox_column:
 
-        st.subheader(
-            "Inbox"
-        )
-
-        if st.session_state.get(
-            "prioritized",
-            False,
+        with st.container(
+            height=800,
+            border=False,
         ):
 
-            st.caption(
-                "Sorted by Urgency (High to Low)"
+            st.subheader(
+                "Inbox"
             )
-
-        else:
 
             st.caption(
                 f"{len(emails)} recent emails"
             )
 
-        for email in emails:
+            for email in emails:
 
-            analysis = email.get(
-                "analysis"
-            )
-
-            with st.container(
-                border=True
-            ):
-
-                content_col, action_col = st.columns(
-                    [3, 1],
-                    vertical_alignment="top",
+                analysis = email.get(
+                    "analysis"
                 )
 
-                # ============================================
-                # EMAIL INFO
-                # ============================================
-
-                with content_col:
-
-                    st.markdown(
-                        f"**{email.get('subject', 'No Subject')}**"
-                    )
-
-                    st.caption(
-                        email.get(
-                            "sender",
-                            "",
-                        )
-                    )
-
-                    if analysis:
-
-                        summary = analysis.get(
-                            "summary",
-                            "",
-                        )
-
-                        if summary:
-
-                            st.write(
-                                summary
-                            )
-
-                        topic = analysis.get(
-                            "topic",
-                            "",
-                        )
-
-                        sentiment = analysis.get(
-                            "sentiment",
-                            "",
-                        )
-
-                        details = []
-
-                        if topic:
-
-                            details.append(
-                                topic
-                            )
-
-                        if sentiment:
-
-                            details.append(
-                                sentiment
-                            )
-
-                        if details:
-
-                            st.caption(
-                                " • ".join(
-                                    details
-                                )
-                            )
-
-                    else:
-
-                        preview = (
-                            email.get(
-                                "body",
-                                "",
-                            )
-                            .replace(
-                                "\n",
-                                " ",
-                            )
-                            [:120]
-                        )
-
-                        if preview:
-
-                            st.write(
-                                preview + "..."
-                            )
-
-                # ============================================
-                # RIGHT
-                # ============================================
-
-                with action_col:
-
-                    if analysis:
-
-                        urgency = analysis.get(
-                            "urgency",
-                            "-",
-                        )
-
-                        st.markdown(
-                            f"{urgency_icon(urgency)} "
-                            f"**{urgency.upper()}**"
-                        )
-
-                    else:
-
-                        st.caption(
-                            "Not analyzed"
-                        )
-
-                # ============================================
-                # OPEN
-                # ============================================
-
-                if st.button(
-                    "Open",
-                    key=(
-                        f"open_"
-                        f"{email['id']}"
-                    ),
-                    use_container_width=True,
+                with st.container(
+                    border=True
                 ):
 
-                    select_email(
-                        email
+                    content_col, action_col = st.columns(
+                        [3, 1],
+                        vertical_alignment="top",
                     )
 
-                    if analysis:
+                    # ============================================
+                    # EMAIL INFO
+                    # ============================================
 
-                        st.session_state[
-                            "analysis"
-                        ] = analysis
+                    with content_col:
 
-                    st.rerun()
+                        st.markdown(
+                            f"**{email.get('subject', 'No Subject')}**"
+                        )
+
+                        st.caption(
+                            email.get(
+                                "sender",
+                                "",
+                            )
+                        )
+
+                        if analysis:
+
+                            summary = analysis.get(
+                                "summary",
+                                "",
+                            )
+
+                            if summary:
+
+                                st.write(
+                                    summary
+                                )
+
+                            topic = analysis.get(
+                                "topic",
+                                "",
+                            )
+
+                            sentiment = analysis.get(
+                                "sentiment",
+                                "",
+                            )
+
+                            details = []
+
+                            if topic:
+
+                                details.append(
+                                    topic
+                                )
+
+                            if sentiment:
+
+                                details.append(
+                                    sentiment
+                                )
+
+                            if details:
+
+                                st.caption(
+                                    " • ".join(
+                                        details
+                                    )
+                                )
+
+                        else:
+
+                            preview = (
+                                email.get(
+                                    "body",
+                                    "",
+                                )
+                                .replace(
+                                    "\n",
+                                    " ",
+                                )
+                                [:120]
+                            )
+
+                            if preview:
+
+                                st.write(
+                                    preview + "..."
+                                )
+
+                    # ============================================
+                    # RIGHT
+                    # ============================================
+
+                    with action_col:
+
+                        if analysis:
+
+                            urgency = analysis.get(
+                                "urgency",
+                                "-",
+                            )
+
+                            st.markdown(
+                                f"{urgency_icon(urgency)} "
+                                f"**{urgency.upper()}**"
+                            )
+
+
+                    # ============================================
+                    # OPEN
+                    # ============================================
+
+                    if st.button(
+                        "Open",
+                        key=(
+                            f"open_"
+                            f"{email['id']}"
+                        ),
+                        use_container_width=True,
+                    ):
+
+                        select_email(
+                            email
+                        )
+
+                        if analysis:
+
+                            st.session_state[
+                                "analysis"
+                            ] = analysis
+
+                        st.rerun()
 
     # ========================================================
     # EMAIL PREVIEW
@@ -950,14 +885,34 @@ if (
                 "### Message"
             )
 
-            st.write(
-                email.get(
-                    "body",
-                    "",
+            email_html = email.get(
+                "html_body",
+                "",
+            ).strip()
+
+            email_body = email.get(
+                "body",
+                "",
+            ).strip()
+
+            # Render the original HTML email when available.
+            # Plain text is used as a fallback for text-only emails.
+            if email_html:
+                components.html(
+                    email_html,
+                    height=600,
+                    scrolling=True,
                 )
-                or
-                "No readable text body found."
-            )
+
+            elif email_body:
+                st.text(
+                    email_body
+                )
+
+            else:
+                st.info(
+                    "No readable email body found."
+                )
 
             # ================================================
             # AI ANALYSIS
@@ -968,84 +923,6 @@ if (
             st.markdown(
                 "### AI Analysis"
             )
-
-            if (
-                "analysis"
-                not in st.session_state
-            ):
-
-                if st.button(
-                    "Analyze Email",
-                    key="preview_analyze",
-                    use_container_width=True,
-                ):
-
-                    try:
-
-                        with st.spinner(
-                            "Analyzing email..."
-                        ):
-
-                            response = requests.get(
-                                f"{BACKEND_URL}"
-                                f"/analyze/"
-                                f"{email['id']}",
-                                timeout=60,
-                            )
-
-                        if response.ok:
-
-                            analysis_result = (
-                                response.json()
-                            )
-
-                            st.session_state[
-                                "analysis"
-                            ] = analysis_result
-
-                            # Update the inbox copy
-                            for inbox_email in (
-                                st.session_state.get(
-                                    "emails",
-                                    [],
-                                )
-                            ):
-
-                                if (
-                                    str(
-                                        inbox_email.get(
-                                            "id"
-                                        )
-                                    )
-                                    ==
-                                    str(
-                                        email.get(
-                                            "id"
-                                        )
-                                    )
-                                ):
-
-                                    inbox_email[
-                                        "analysis"
-                                    ] = (
-                                        analysis_result
-                                    )
-
-                                    break
-
-                            st.rerun()
-
-                        else:
-
-                            st.error(
-                                "Analysis failed."
-                            )
-
-                    except requests.RequestException:
-
-                        st.error(
-                            "Analysis failed."
-                        )
 
             # ================================================
             # ANALYSIS RESULTS
@@ -1180,11 +1057,14 @@ if (
 
                             if chunk:
 
-                                full_reply += chunk
+                                for character in chunk:
+                                    full_reply += character
 
-                                reply_placeholder.markdown(
-                                    full_reply + "▌"
-                                )
+                                    reply_placeholder.markdown(
+                                        full_reply + "▌"
+                                    )
+
+                                    time.sleep(0.015)
 
                         # Remove the cursor after streaming finishes.
                         reply_placeholder.markdown(
@@ -1195,7 +1075,9 @@ if (
                             "draft_reply"
                         ] = full_reply
 
-                        st.rerun()
+                        st.session_state[
+                            "reply_editor"
+                        ] = full_reply
 
                     else:
 
@@ -1218,13 +1100,16 @@ if (
                 in st.session_state
             ):
 
+                if "reply_editor" not in st.session_state:
+                    st.session_state[
+                        "reply_editor"
+                    ] = st.session_state[
+                        "draft_reply"
+                    ]
+
                 edited_reply = st.text_area(
                     "Review and edit reply",
-                    value=(
-                        st.session_state[
-                            "draft_reply"
-                        ]
-                    ),
+                    key="reply_editor",
                     height=250,
                 )
 
@@ -1276,6 +1161,11 @@ if (
 
                                 st.session_state.pop(
                                     "draft_reply",
+                                    None,
+                                )
+
+                                st.session_state.pop(
+                                    "reply_editor",
                                     None,
                                 )
 

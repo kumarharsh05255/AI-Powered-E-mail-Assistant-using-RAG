@@ -6,18 +6,13 @@ from gmail_client import (
     get_email,
     send_reply,
 )
-from email_analyzer import (
-    analyze_email,
-    summarize_email,
-    classify_email,
-    analyze_sentiment,
-)
 from vector_store import (
     email_exists,
     store_email,
     search_emails,
     get_stored_emails,
 )
+from email_analyzer import analyze_email
 from rag import generate_reply_stream
 
 
@@ -26,7 +21,6 @@ app = FastAPI(
 )
 
 
-# Quick checks to confirm that the FastAPI backend is running
 @app.get("/")
 def home():
     return {
@@ -43,39 +37,56 @@ def health_check():
 
 @app.get("/emails")
 def get_recent_emails(limit: int = 10):
-    # Fetch raw recent emails directly from Gmail
+    """
+    Fetch recent Gmail emails, analyze and store only new ones,
+    then return the inbox with stored/skipped counts.
+    """
     try:
-        return fetch_emails(limit)
+        recent_emails = fetch_emails(limit)
+        stored_emails = get_stored_emails()
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
+        stored_by_id = {
+            email["id"]: email
+            for email in stored_emails
+        }
 
-
-@app.post("/sync-emails")
-def sync_emails(limit: int = 10):
-    # Analyze new Gmail emails and store them in ChromaDB
-    try:
-        emails = fetch_emails(limit)
-
+        result = []
         stored = 0
         skipped = 0
 
-        for email in emails:
-            # Skip emails already stored to avoid unnecessary LLM calls
+        for email in recent_emails:
             if email_exists(email["id"]):
                 skipped += 1
+
+                stored_email = stored_by_id.get(
+                    email["id"]
+                )
+
+                if stored_email:
+                    email["analysis"] = stored_email.get(
+                        "analysis"
+                    )
+
+                result.append(email)
                 continue
 
             analysis = analyze_email(email)
 
-            if store_email(email, analysis):
+            was_stored = store_email(
+                email,
+                analysis,
+            )
+
+            if was_stored:
                 stored += 1
+            else:
+                skipped += 1
+
+            email["analysis"] = analysis
+            result.append(email)
 
         return {
-            "fetched": len(emails),
+            "emails": result,
             "stored": stored,
             "skipped": skipped,
         }
@@ -87,66 +98,22 @@ def sync_emails(limit: int = 10):
         )
 
 
-@app.get("/inbox")
-def get_analyzed_inbox():
-    # Use saved analysis instead of calling the LLM again
-    emails = get_stored_emails()
-
-    urgency_order = {
-        "High": 0,
-        "Medium": 1,
-        "Low": 2,
-    }
-
-    emails.sort(
-        key=lambda email: urgency_order.get(
-            email["analysis"]["urgency"],
-            3,
-        )
-    )
-
-    return emails
-
-
-@app.get("/analyze/{email_id}")
-def analyze_email_endpoint(email_id: str):
-    email = get_email(email_id)
-
-    return analyze_email(email)
-
-
-@app.get("/summary/{email_id}")
-def summarize_email_endpoint(email_id: str):
-    email = get_email(email_id)
-
-    return {
-        "summary": summarize_email(email)
-    }
-
-
-@app.get("/classification/{email_id}")
-def classify_email_endpoint(email_id: str):
-    email = get_email(email_id)
-
-    return classify_email(email)
-
-
-@app.get("/sentiment/{email_id}")
-def sentiment_endpoint(email_id: str):
-    email = get_email(email_id)
-
-    return analyze_sentiment(email)
-
-
 @app.get("/search-emails")
 def search_email_endpoint(
     query: str,
     top_k: int = 5,
 ):
-    return search_emails(
-        query=query,
-        top_k=top_k,
-    )
+    try:
+        return search_emails(
+            query=query,
+            top_k=top_k,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
 
 
 @app.get("/generate-reply/{email_id}")
@@ -154,7 +121,6 @@ def generate_reply_endpoint(email_id: str):
     try:
         email = get_email(email_id)
 
-        # StreamingResponse sends each generated chunk immediately
         return StreamingResponse(
             generate_reply_stream(email),
             media_type="text/plain",
