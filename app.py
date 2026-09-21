@@ -200,7 +200,7 @@ else:
 email_limit = st.sidebar.number_input(
     "Emails to load",
     min_value=1,
-    max_value=50,
+    max_value=40,
     value=10,
 )
 
@@ -239,7 +239,7 @@ if st.sidebar.button(
             params={
                 "limit": email_limit,
             },
-            timeout=120,
+            timeout=300,
         )
 
         if response.ok:
