@@ -197,22 +197,22 @@ else:
     )
 
 
-email_limit = st.sidebar.number_input(
-    "Emails to load",
-    min_value=1,
-    max_value=40,
-    value=10,
-)
+with st.sidebar.form("fetch_form"):
+
+    email_limit = st.number_input(
+        "Emails to load",
+        min_value=1,
+        max_value=40,
+        value=10,
+    )
+
+    fetch_submitted = st.form_submit_button(
+        "Fetch Recent Emails",
+        use_container_width=True,
+    )
 
 
-# ============================================================
-# LOAD RECENT EMAILS
-# ============================================================
-
-if st.sidebar.button(
-    "Fetch Recent Emails",
-    use_container_width=True,
-):
+if fetch_submitted:
 
     st.session_state[
         "show_startup_message"
@@ -306,16 +306,20 @@ st.sidebar.subheader(
 )
 
 
-search_query = st.sidebar.text_input(
-    "Search your emails",
-    placeholder="e.g. leave requests",
-)
+with st.sidebar.form("search_form"):
+
+    search_query = st.text_input(
+        "Search your emails",
+        placeholder="e.g. leave requests",
+    )
+
+    search_submitted = st.form_submit_button(
+        "Search",
+        use_container_width=True,
+    )
 
 
-if st.sidebar.button(
-    "Search",
-    use_container_width=True,
-):
+if search_submitted:
 
     st.session_state[
         "show_startup_message"
